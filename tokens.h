@@ -1,0 +1,11 @@
+enum {
+	IS = 256,
+	IN,
+	OUT,
+	CHAR,
+	QUOTE,
+	NAMED_ACTION,
+	INLINE_ACTION,
+	ATTACHED_ACTION,
+	IDENT,
+};
