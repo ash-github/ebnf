@@ -45,112 +45,6 @@ static void synth_nterm_name(int kind, char *name)
 	id++;
 }
 
-// (a, b, c, ...)
-static vector<string> parse_arg_list(void)
-{
-	vector<string> list;
-	if (sym == IDENT) {
-		list.emplace_back(yytext);
-		getsym();
-		goto finish;
-	}
-	if (sym == QUOTE) {
-		list.emplace_back(qtext);
-		getsym();
-		goto finish;
-	}
-	if (sym == '(') getsym();
-	else error();
-	if (sym == ')') {
-		getsym();
-		goto finish;
-	}
-	for (;;) {
-		if (sym == IDENT) {
-			list.emplace_back(yytext);
-			getsym();
-		} else if (sym == QUOTE) {
-			list.emplace_back(qtext);
-			getsym();
-		} else {
-			error();
-		}
-		if (sym == ')') {
-			getsym();
-			goto finish;
-		}
-		if (sym == ',') getsym();
-		else error();
-	}
-finish:
-	return list;
-}
-
-static Param parse_param()
-{
-	if (sym != QUOTE) error();
-	string type(qtext, qlen);
-	getsym();
-	string name;
-	if (sym == IDENT) {
-		name = yytext;
-		getsym();
-	}
-	return Param(type, name);
-}
-
-static vector<Param> parse_param_list()
-{
-	vector<Param> list;
-	if (sym == QUOTE) {
-		list.emplace_back(parse_param());
-		goto finish;
-	}
-	if (sym == '(') getsym();
-	else error();
-	if (sym == ')') {
-		getsym();
-		goto finish;
-	}
-	for (;;) {
-		list.emplace_back(parse_param());
-		if (sym == ')') {
-			getsym();
-			goto finish;
-		}
-		if (sym == ',') getsym();
-		else error();
-	}
-finish:
-	return list;
-}
-
-static ParamSpec parse_params() {
-	ParamSpec params;
-	if (sym == IN) {
-		getsym();
-		params.in = parse_param_list();
-	}
-	if (sym == OUT) {
-		getsym();
-		params.out = parse_param_list();
-	}
-	return params;
-}
-
-static ArgSpec parse_args() {
-	ArgSpec args;
-	if (sym == IN) {
-		getsym();
-		args.in = parse_arg_list();
-	}
-	if (sym == OUT) {
-		getsym();
-		args.out = parse_arg_list();
-	}
-	return args;
-}
-
 static void parse_branch(Branch &branch, Symbol *lhs, int branch_id)
 {
 	for (;;) {
@@ -182,7 +76,7 @@ static void parse_branch(Branch &branch, Symbol *lhs, int branch_id)
 				switch (opening) {
 				case '{':
 					for (auto &c: newsym->branches)
-						c.emplace_back(new Instance(newsym));
+						c.emplace_back(newsym);
 				       	newsym->branches.emplace_back();
 					break;
 				case '[':
@@ -226,63 +120,15 @@ static void parse_branch(Branch &branch, Symbol *lhs, int branch_id)
 					newsym = term_dict[term_name] = new Symbol(Symbol::TERM, term_name);
 				}
 				getsym();
-				if (lhs && sym == '?') {
-					getsym();
-					// expect IDENT: name of semantic predicate function
-					if (sym == IDENT) {
-						string guarded_term_name(term_name + "::" + yytext);
-						Symbol *guarded_term = term_dict[guarded_term_name];
-						if (!guarded_term) {
-							guarded_term = term_dict[guarded_term_name] =
-								new Symbol(Symbol::TERM, term_name);
-						}
-						guarded_term->sp = yytext;
-						guarded_term->core = newsym;
-						newsym = guarded_term;
-						getsym();
-					} else {
-						error();
-					}
-				}
-			}
-			break;
-		case NAMED_ACTION:
-			{
-				string name(yytext+1); // +1 for leading '@'
-				getsym();
-				newsym = action_dict[name];
-				if (!newsym)
-					newsym = action_dict[name] = new Symbol(Symbol::ACTION, name);
-				newsym->nullable = true;
-			}
-			break;
-		case INLINE_ACTION:
-			{
-				newsym = new Symbol(Symbol::ACTION, "");
-				newsym->action = qtext;
-				getsym();
-				newsym->nullable = true;
 			}
 			break;
 		default:
 			// S ::= ... | <empty> | ...
-			if (branch.size() == 1 && branch[0]->sym == empty)
+			if (branch.size() == 1 && branch[0] == empty)
 				branch.clear();
 			return;
 		}
-		Instance *newinst;
-		string atact;
-		if (sym == ATTACHED_ACTION) {
-			atact = qtext;
-			getsym();
-		}
-		ArgSpec args = parse_args();
-		if (!args.empty())
-			newinst = new Instance(newsym, std::move(args));
-		else
-			newinst = new Instance(newsym);
-		newinst->attached_action = atact;
-		branch.emplace_back(newinst);
+		branch.emplace_back(newsym);
 	}
 }
 
@@ -306,34 +152,20 @@ static void parse_rule()
 	nterm_name = string(qtext, qlen);
 	getsym();
 
-#ifdef ENABLE_WEAK
-	// TODO fix broken code
-	if (nterm_name == "WEAK") {
-		Branch weak_symbols;
-		parse_branch(weak_symbols, nullptr, 0);
-		for (Symbol *s: weak_symbols)
-			s->weak = true;
-	} else {
-#endif
-		Symbol *nterm = nterm_dict[nterm_name];
-		if (nterm) {
-			if (nterm->defined) {
-				fprintf(stderr, "%d: error: redefinition of <%s>\n",
-					yylineno, nterm_name.c_str());
-				exit(1);
-			} else {
-				nterm->defined = true;
-			}
+	Symbol *nterm = nterm_dict[nterm_name];
+	if (nterm) {
+		if (nterm->defined) {
+			fprintf(stderr, "%d: error: redefinition of <%s>\n",
+				yylineno, nterm_name.c_str());
+			exit(1);
 		} else {
-			nterm = nterm_dict[nterm_name] = new Symbol(Symbol::NTERM, nterm_name);
+			nterm->defined = true;
 		}
-
-		if (!top) top = nterm;
-#ifdef ENABLE_WEAK
+	} else {
+		nterm = nterm_dict[nterm_name] = new Symbol(Symbol::NTERM, nterm_name);
 	}
-#endif
 
-	nterm->params = parse_params();
+	if (!top) top = nterm;
 
 	if (sym != IS) error();
 	getsym();
@@ -344,36 +176,13 @@ static void parse_rule()
 	getsym();
 }
 
-static void parse_decl()
-{
-	Symbol *s;
-	if (sym == IDENT) {
-		string name(yytext);
-		getsym();
-		s = term_dict[name];
-		if (!s)
-			s = term_dict[name] = new Symbol(Symbol::TERM, name);
-	} else if (sym == NAMED_ACTION) {
-		string name(yytext+1);
-		getsym();
-		s = action_dict[name];
-		if (!s)
-			s = action_dict[name] = new Symbol(Symbol::ACTION, name);
-	} else {
-		error();
-	}
-	s->params = parse_params();
-	if (sym != '\n') error();
-	getsym();
-}
-
 void parse()
 {
 	getsym();
 	while (sym) {
-		if (sym == QUOTE) parse_rule();
-		else parse_decl();
-		while (sym == '\n')
+		parse_rule();
+		while (sym == '\n') {
 			getsym(); // skip blank links following declaration
+		}
 	}
 }

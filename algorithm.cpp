@@ -5,7 +5,7 @@
 
 using namespace std;
 
-void print_production(bool rich, Symbol *nterm, const Branch &body, FILE *fp);
+void print_production(Symbol *nterm, const Branch &body, FILE *fp);
 
 static bool insert_all(set<Symbol*> &a, const set<Symbol*> &b)
 {
@@ -25,25 +25,24 @@ void compute_first_follow()
 		for_each_nterm([&](Symbol *nterm) {
 			for (auto &branch: nterm->branches) {
 				if (!nterm->nullable) {
-					if (all_of(branch.begin(), branch.end(), [](Instance *inst){return inst->sym->nullable;})) {
+					if (all_of(branch.begin(), branch.end(), [](Symbol *sym){return sym->nullable;})) {
 						nterm->nullable = true;
 						changed = true;
 					}
 				}
-				for (Instance *inst: branch) {
-					Symbol *s = inst->sym;
+				for (Symbol *s: branch) {
 					if (insert_all(nterm->first, s->first))
 						changed = true;
 					if (!s->nullable)
 						break;
 				}
 				for (auto it1 = branch.begin(); it1 != branch.end(); it1++) {
-					Symbol *s1 = (*it1)->sym, *s2;
+					Symbol *s1 = *it1, *s2;
 					if (s1->kind != Symbol::NTERM)
 						continue;
 					auto it2 = next(it1);
 					while (it2 != branch.end()) {
-						s2 = (*it2)->sym;
+						s2 = *it2;
 						if (insert_all(s1->follow, s2->first))
 							changed = true;
 						if (!s2->nullable)
@@ -85,11 +84,9 @@ bool check_left_recursion()
 			for (auto &branch: nterm->branches) {
 				auto it = branch.begin();
 				while (it != branch.end()) {
-					Symbol *s = (*it)->sym;
-					if (s->kind == Symbol::NTERM)
-						visit(s);
-					if (!s->nullable)
-						break;
+					Symbol *s = *it;
+					if (s->kind == Symbol::NTERM) visit(s);
+					if (!s->nullable) break;
 					it++;
 				}
 			}
@@ -104,14 +101,14 @@ set<Symbol*> first_of_production(Symbol *nterm, const Branch &body)
 	set<Symbol*> f;
 	auto it = body.begin();
 	while (it != body.end()) {
-		Symbol *s = (*it)->sym;
+		Symbol *s = *it;
 		f.insert(s->first.begin(), s->first.end());
-		if (!s->nullable)
-			break;
+		if (!s->nullable) break;
 		it++;
 	}
-	if (it == body.end())
+	if (it == body.end()) {
 		f.insert(nterm->follow.begin(), nterm->follow.end());
+	}
 	return f;
 }
 
@@ -124,11 +121,13 @@ bool check_grammar()
 	number_nterms();
 	// detect unreachable nonterminals
 	for_each_nterm([](Symbol *nterm) {
-		if (nterm->id < 0)
+		if (nterm->id < 0) {
 			fprintf(stderr, "warning: <%s> is useless\n", nterm->name.c_str());
+		}
 	});
-	if (!check_left_recursion())
+	if (!check_left_recursion()) {
 		ans = false;
+	}
 	for_each_nterm([&](Symbol *nterm) {
 		map<Symbol*, Branch*> m;
 		for (auto &branch: nterm->branches) {
@@ -136,8 +135,8 @@ bool check_grammar()
 			for (Symbol *s: f) {
 				if (m[s]) {
 					fprintf(stderr, "conflict on %s:\n", s->name.c_str());
-					print_production(false, nterm, *m[s], stderr);
-					print_production(false, nterm, branch, stderr);
+					print_production(nterm, *m[s], stderr);
+					print_production(nterm, branch, stderr);
 					ans = false;
 				} else {
 					m[s] = &branch;
